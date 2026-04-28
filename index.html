@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+
+  <head>
+    <meta charset="UTF-8">
+    <title>PRODIGY_DS_01</title>
+    
+
+  </head>
+    
+  <body>
+  <!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>World Population Chart</title>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      background: #f5f5f3;
+      color: #1a1a1a;
+      margin: 0;
+      padding: 24px;
+      box-sizing: border-box;
+    }
+    select {
+      font-size: 13px;
+      padding: 4px 8px;
+      border: 0.5px solid #ccc;
+      border-radius: 6px;
+      background: #fff;
+      cursor: pointer;
+    }
+    .metric-card {
+      background: #ebebeb;
+      border-radius: 8px;
+      padding: 12px 14px;
+    }
+    .metric-label {
+      font-size: 12px;
+      color: #666;
+      margin: 0 0 4px;
+    }
+    .metric-value {
+      font-size: 20px;
+      font-weight: 500;
+      margin: 0;
+      color: #1a1a1a;
+    }
+    .metric-value.small {
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+
+<h2 class="sr-only">Bar chart showing total population by world region, sourced from the World Bank SP.POP.TOTL indicator.</h2>
+
+<div style="max-width: 860px; margin: 0 auto;">
+
+  <div style="display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 4px; flex-wrap: wrap; gap: 8px;">
+    <div>
+      <p style="font-size: 20px; font-weight: 500; margin: 0;">World population by region</p>
+      <p style="font-size: 13px; color: #666; margin: 4px 0 0;">Source: World Bank · SP.POP.TOTL</p>
+    </div>
+    <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+      <select id="yearSelect">
+        <option value="2022">2022</option>
+        <option value="2020">2020</option>
+        <option value="2015">2015</option>
+        <option value="2010">2010</option>
+        <option value="2000">2000</option>
+      </select>
+      <select id="sortSelect">
+        <option value="desc">Sort: largest first</option>
+        <option value="asc">Sort: smallest first</option>
+        <option value="alpha">Sort: A–Z</option>
+      </select>
+    </div>
+  </div>
+
+  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin: 16px 0;">
+    <div class="metric-card">
+      <p class="metric-label">World total</p>
+      <p class="metric-value" id="worldTotal">—</p>
+    </div>
+    <div class="metric-card">
+      <p class="metric-label">Largest region</p>
+      <p class="metric-value small" id="largestRegion">—</p>
+    </div>
+    <div class="metric-card">
+      <p class="metric-label">Smallest region</p>
+      <p class="metric-value small" id="smallestRegion">—</p>
+    </div>
+    <div class="metric-card">
+      <p class="metric-label">Regions shown</p>
+      <p class="metric-value" id="regionCount">—</p>
+    </div>
+  </div>
+
+  <div id="legend" style="display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 12px; font-size: 12px; color: #555;"></div>
+
+  <div style="position: relative; width: 100%; height: 360px;">
+    <canvas id="popChart" role="img" aria-label="Bar chart of total population by world region"></canvas>
+  </div>
+
+  <p style="font-size: 11px; color: #999; margin-top: 10px;">
+    Data fetched live from the World Bank Open Data API. Regions are World Bank-defined aggregates.
+  </p>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+  const REGION_CODES = [
+    { code: 'EAS', label: 'East Asia & Pacific' },
+    { code: 'SAS', label: 'South Asia' },
+    { code: 'SSF', label: 'Sub-Saharan Africa' },
+    { code: 'ECS', label: 'Europe & Central Asia' },
+    { code: 'LCN', label: 'Latin America & Caribbean' },
+    { code: 'MEA', label: 'Middle East & N. Africa' },
+    { code: 'NAC', label: 'North America' },
+  ];
+
+  const COLORS = ['#378ADD','#1D9E75','#D85A30','#7F77DD','#BA7517','#D4537E','#639922'];
+
+  let chartInstance = null;
+
+  async function fetchPopulation(year) {
+    const codes = REGION_CODES.map(r => r.code).join(';');
+    const url = `https://api.worldbank.org/v2/country/${codes}/indicator/SP.POP.TOTL?format=json&date=${year}&per_page=50`;
+    const res = await fetch(url);
+    const json = await res.json();
+    return json[1] || [];
+  }
+
+  function fmtBillion(val) {
+    if (!val) return 'N/A';
+    if (val >= 1e9) return (val / 1e9).toFixed(2) + 'B';
+    if (val >= 1e6) return (val / 1e6).toFixed(0) + 'M';
+    return val.toLocaleString();
+  }
+
+  function buildLegend(labels, colors) {
+    const leg = document.getElementById('legend');
+    leg.innerHTML = labels.map((l, i) =>
+      `<span style="display:flex;align-items:center;gap:5px;">
+        <span style="width:10px;height:10px;border-radius:2px;background:${colors[i]};flex-shrink:0;"></span>
+        <span>${l}</span>
+      </span>`
+    ).join('');
+  }
+
+  function renderChart(rawData, year, sortMode) {
+    const map = {};
+    rawData.forEach(d => { if (d.value !== null) map[d.countryiso3code] = d.value; });
+
+    let entries = REGION_CODES.map((r, i) => ({
+      label: r.label,
+      code: r.code,
+      value: map[r.code] || 0,
+      color: COLORS[i],
+    })).filter(e => e.value > 0);
+
+    if (sortMode === 'desc') entries.sort((a, b) => b.value - a.value);
+    else if (sortMode === 'asc') entries.sort((a, b) => a.value - b.value);
+    else entries.sort((a, b) => a.label.localeCompare(b.label));
+
+    const labels = entries.map(e => e.label);
+    const values = entries.map(e => +(e.value / 1e9).toFixed(3));
+    const colors = entries.map(e => e.color);
+    const total = entries.reduce((s, e) => s + e.value, 0);
+
+    document.getElementById('worldTotal').textContent = fmtBillion(total);
+    const sorted = [...entries].sort((a, b) => b.value - a.value);
+    document.getElementById('largestRegion').textContent = sorted[0]?.label || '—';
+    document.getElementById('smallestRegion').textContent = sorted[sorted.length - 1]?.label || '—';
+    document.getElementById('regionCount').textContent = entries.length;
+
+    buildLegend(labels, colors);
+
+    if (chartInstance) chartInstance.destroy();
+
+    chartInstance = new Chart(document.getElementById('popChart'), {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [{
+          label: 'Population (billions)',
+          data: values,
+          backgroundColor: colors.map(c => c + 'CC'),
+          borderColor: colors,
+          borderWidth: 1.5,
+          borderRadius: 4,
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: ctx => {
+                const raw = entries[ctx.dataIndex]?.value;
+                return ` ${fmtBillion(raw)} (${(raw / total * 100).toFixed(1)}% of shown regions)`;
+              }
+            }
+          }
+        },
+        scales: {
+          x: {
+            ticks: {
+              font: { size: 11 },
+              maxRotation: 30,
+              autoSkip: false,
+              callback: function(val, i) {
+                const lbl = labels[i];
+                const words = lbl.split(' ');
+                if (words.length > 3) return [words.slice(0, 3).join(' '), words.slice(3).join(' ')];
+                return lbl;
+              }
+            },
+            grid: { display: false },
+          },
+          y: {
+            ticks: {
+              font: { size: 11 },
+              callback: v => v.toFixed(1) + 'B'
+            },
+            title: {
+              display: true,
+              text: 'Population (billions)',
+              font: { size: 12 }
+            }
+          }
+        }
+      }
+    });
+  }
+
+  async function load() {
+    const year = document.getElementById('yearSelect').value;
+    const sort = document.getElementById('sortSelect').value;
+    document.getElementById('worldTotal').textContent = '…';
+    try {
+      const data = await fetchPopulation(year);
+      renderChart(data, year, sort);
+    } catch (e) {
+      document.getElementById('worldTotal').textContent = 'Error';
+      console.error(e);
+    }
+  }
+
+  document.getElementById('yearSelect').addEventListener('change', load);
+  document.getElementById('sortSelect').addEventListener('change', () => {
+    const year = document.getElementById('yearSelect').value;
+    const sort = document.getElementById('sortSelect').value;
+    fetchPopulation(year).then(data => renderChart(data, year, sort));
+  });
+
+  load();
+</script>
+
+</body>
+</html>
+    
+  </body>
+  
+</html>
